@@ -2,10 +2,14 @@ import sys, subprocess, hashlib
 import string
 import math
 import os
+from threading import Thread
 #import Crypto.Util.number
-
+global b
+b = 2**64
 global timings #stores mock-ciphers timings
 timings = {}
+global omega 
+
 
 ##########################################
 #######		MONTGOMERY				######
@@ -37,42 +41,45 @@ def Mont_Omega(b, N) :
 		t *= t * N % b
 	return -t % b
 
-def Mont_Mul(b, x, y, N) :
+def Mont_Mul(b, x, y, N, omega) :
 	flag = False
 	r = 0
 	x0 = get_ith_limb(x, 0)
-	omega = Mont_Omega(b, N)
+	#omega = Mont_Omega(b, N)
 	#print omega
 	for i in range(0, int(get_limb_number(N))) :
 		r0 = get_ith_limb(r, 0)
 		yi = get_ith_limb(y, i)
-		u = (r0 + yi * x0) * omega % b
+		u = ((r0 + yi * x0) * omega) % b
 		r = (r + yi * x + u * N)/b
 	if (r >= N) :
 		flag = True
 		r -= N
 	return r, flag
 
-def Mont_Exp (b, x, y, N) :
+def Mont_Exp (b, x, y, N, omega) :
 	rho_sq = Mont_Rho_Squared(b, N)
-	t_hat = Mont_Mul(b, 1, rho_sq, N)[0]
-	x_hat = Mont_Mul(b, x, rho_sq, N)[0]
+	t_hat = Mont_Mul(b, 1, rho_sq, N, omega)[0]
+	x_hat = Mont_Mul(b, x, rho_sq, N, omega)[0]
 	y_bin = y
 
 	for i in range(0, len(y_bin)) :
 		
-		t_hat = Mont_Mul(b, t_hat, t_hat, N)[0]
+		t_hat = Mont_Mul(b, t_hat, t_hat, N, omega)[0]
 
 		if (y_bin[i] == "1") :
-			t_hat = Mont_Mul(b, t_hat, x_hat, N)[0]
+			t_hat = Mont_Mul(b, t_hat, x_hat, N, omega)[0]
+	
+	t_hat = Mont_Mul(b, t_hat, t_hat, N, omega)[0]
 
-	#0
-	t_hat = Mont_Mul(b, t_hat, t_hat, N)[0]
-	flag = Mont_Mul(b, t_hat, t_hat, N)[1]
+	t_temp = t_hat
+	#bit0
+	t_hat, flag = Mont_Mul(b, t_temp, t_temp, N, omega)
 
-	t_hat = Mont_Mul(b, t_hat, t_hat, N)[0]
-	t_hat = Mont_Mul(b, t_hat, x_hat, N)[0]
-	flag1 = Mont_Mul(b, t_hat, x_hat, N)[1]
+	#bit1
+	t_hat = Mont_Mul(b, t_temp, x_hat, N, omega)[0]
+	t_hat, flag1 = Mont_Mul(b, t_hat, t_hat, N, omega)
+
 	return flag, flag1
 	#return Mont_Mul(b, t_hat, 1, N)#, flag
 
@@ -82,7 +89,7 @@ def Mont_Exp (b, x, y, N) :
 def gen_Random_cipher() :
 	#print os.urandom(8).encode('hex')
 	#return int (os.urandom(8).encode('hex'), 16)# + os.urandom(16).encode('hex') + os.urandom(16).encode('hex') + os.urandom(16).encode('hex'),16)
-	return int(os.urandom(8).encode('hex'),16)
+	return int(os.urandom(64).encode('hex'),16)
 
 def gen_ciphers_list(k) :
 	list = []
@@ -97,7 +104,8 @@ def get_avg(list) :
 	sum = 0
 	for value in list :
 		sum += int(value)
-	return (sum / len(list))	
+	#print len(list)
+	return (sum / (1.0*len(list)))	
 
 def readFile(src) :
   file = open(src, "r")
@@ -105,22 +113,22 @@ def readFile(src) :
   for line in file:
     array.append(line)
   file.close
-  return ( array[0], array[1]) #return N, e
+  return ( int(array[0],16), int(array[1],16)) #return N, e
 
 def interact( c ) :
-  target_in.write( "%s\n" % ( c ) ) ; target_in.flush()
+  #print hex(c).rstrip("L").lstrip("0x")
+  target_in.write( "%s\n" % ( hex(c).rstrip("L").lstrip("0x") ) ) ; target_in.flush()
 
   # Receive error code from attack target.
-  m = ( target_out.readline().strip() )
   t = ( target_out.readline().strip() )
-  
-  return ( m, t )
+  m = ( target_out.readline().strip() )
+  return ( t, m )
 
 def attack (N) :
 	d = "1" #private key guess
-
+	omega = Mont_Omega(b, N)
 	mock_ciphers = gen_ciphers_list(10000)
-	
+
 	for c in mock_ciphers :
 	   	( t, m ) = interact(c)
 	   	add_timing( c, t)
@@ -136,7 +144,7 @@ def attack (N) :
 		bucket4 = []
 	   	for c in mock_ciphers :
 	   		#print c
-	   		flagfor0, flagfor1 = Mont_Exp(2**64, c, d, N)
+	   		flagfor0, flagfor1 = Mont_Exp(2**64, c, d, N, omega)
 	   		#print flagfor1, flagfor0
 	   		if flagfor1:
 	   			bucket1.append(timings[c])
@@ -147,10 +155,10 @@ def attack (N) :
 	   			bucket3.append(timings[c])
 	   		else:
 	   			bucket4.append(timings[c])
-	   	print get_avg(bucket1)
-	   	print get_avg(bucket2)
-	   	print get_avg(bucket3)
-	   	print get_avg(bucket4)
+	   	# print get_avg(bucket1)
+	   	# print get_avg(bucket2)
+	   	# print get_avg(bucket3)
+	   	# print get_avg(bucket4)
 
 		dif1 = abs(get_avg(bucket1) - get_avg(bucket2))
 		dif2 = abs(get_avg(bucket3) - get_avg(bucket4))
@@ -175,7 +183,7 @@ if ( __name__ == "__main__" ) :
   target_out = target.stdout
   target_in  = target.stdin
 
-  #(N, e) = readFile(sys.argv[2])
+  (N, e) = readFile(sys.argv[2])
  
 
   # Execute a function representing the attacker.
@@ -188,8 +196,9 @@ if ( __name__ == "__main__" ) :
   x = 14777912434722484012795150747433197744767136897217162407762927865455435847145735686915331827545464755796807234471871479852466934757357239598392518626677060360692000372538879569563006291417336461597266487127830346581372131687317440322423575802518877104255558126974558449677855388857647750426674157655378030063 
   y = 82066906503981187431857367827616517547742026992296675269535396889324683244050948742697807615775012316882267807115314093017053946984947287322227475300115586985710753917221939474324908096704688427033412500308916929487658423364451145032970068348791689894471753550784886649253371303609895809157663585850520032959 
   #o = 3821265123607851245 
-  N = 90294311424406673228338297200726006944631753630845809306519637227101667889745832477888085683126958592769170203506611034167697397910397535705315263098112563532540303944988972364693194890784306135883557032253343377823721157298262490305418829735604172267015074712472931277122629288704655390257429427388301857563 
+  #N = 90294311424406673228338297200726006944631753630845809306519637227101667889745832477888085683126958592769170203506611034167697397910397535705315263098112563532540303944988972364693194890784306135883557032253343377823721157298262490305418829735604172267015074712472931277122629288704655390257429427388301857563 
   #result = 45433802701920380453411604806231273290811444884096114866758714947221099172975151096569118540500624694453477260546154752560809179159635158784131951809382948007794975525872262558587977950099953644268896784688508428777931074503177291622432277083167436003170271947767054363053386710537985790356233640292404824313
   attack(N)
   #print Mont_Exp(2**64, x, y, N)
+
 
